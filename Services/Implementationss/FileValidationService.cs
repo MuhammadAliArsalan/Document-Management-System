@@ -2,81 +2,119 @@ using DocumentSearch.Models;
 using DocumentSearch.Services.Interfaces;
 using Microsoft.Extensions.Options;
 
-namespace DocumentSearch.Services.Implementationss;
-
-public sealed class FileValidationService(IOptions<FileUploadSettings> options) : IFileValidationService
+namespace DocumentSearch.Services.Implementationss
 {
-    private readonly FileUploadSettings _settings = options.Value;
-
-    public async Task<IReadOnlyCollection<string>> ValidateAsync(
-        IFormFile? file,
-        CancellationToken cancellationToken = default)
+    public class FileValidationService : IFileValidationService
     {
-        var errors = new List<string>();
+        private readonly FileUploadSettings _settings;
 
-        if (file == null || file.Length == 0)
+        public FileValidationService(IOptions<FileUploadSettings> options)
         {
-            return ["File is required."];
+            _settings = options.Value;
         }
 
-        if (file.Length > _settings.MaxFileSizeBytes)
+        public async Task<IReadOnlyCollection<string>> ValidateAsync(
+            IFormFile? file,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
-            errors.Add(
-                $"File size cannot exceed {_settings.MaxFileSizeBytes / 1024 / 1024} MB.");
-        }
+            List<string> errors = new List<string>();
 
-        var fileName = Path.GetFileName(file.FileName);
-        if (string.IsNullOrWhiteSpace(fileName) ||
-            fileName.Length > 255 ||
-            !string.Equals(fileName, file.FileName, StringComparison.Ordinal))
-        {
-            errors.Add("The file name is invalid or unsafe.");
-        }
+            if (file == null || file.Length == 0)
+            {
+                errors.Add("File is required.");
+                return errors;
+            }
 
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        var expectedContentType = extension switch
-        {
-            ".pdf" => "application/pdf",
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            _ => null
-        };
+            if (file.Length > _settings.MaxFileSizeBytes)
+            {
+                errors.Add("File size cannot exceed " + (_settings.MaxFileSizeBytes / 1024 / 1024) + " MB.");
+            }
 
-        if (expectedContentType == null)
-        {
-            errors.Add("Only PDF, JPEG, and PNG files are allowed.");
+            string fileName = Path.GetFileName(file.FileName);
+            if (string.IsNullOrWhiteSpace(fileName) ||
+                fileName.Length > 255 ||
+                !string.Equals(fileName, file.FileName, StringComparison.Ordinal))
+            {
+                errors.Add("The file name is invalid or unsafe.");
+            }
+
+            string extension = Path.GetExtension(fileName).ToLowerInvariant();
+
+            string? expectedContentType = null;
+
+            switch (extension)
+            {
+                case ".pdf":
+                    expectedContentType = "application/pdf";
+                    break;
+
+                case ".jpg":
+                case ".jpeg":
+                    expectedContentType = "image/jpeg";
+                    break;
+
+                case ".png":
+                    expectedContentType = "image/png";
+                    break;
+
+                default:
+                    expectedContentType = null;
+                    break;
+            }
+
+            if (expectedContentType == null)
+            {
+                errors.Add("Only PDF, JPEG, and PNG files are allowed.");
+                return errors;
+            }
+
+            if (!string.Equals(file.ContentType, expectedContentType, StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add("The declared content type does not match the file extension.");
+            }
+
+            byte[] header = new byte[8];
+            int bytesRead = 0;
+
+            using (Stream stream = file.OpenReadStream())
+            {
+                bytesRead = await stream.ReadAsync(header, 0, header.Length, cancellationToken);
+            }
+
+            bool signatureIsValid = false;
+
+            switch (extension)
+            {
+                case ".pdf":
+                    // %PDF-
+                    signatureIsValid = bytesRead >= 5 &&
+                                       header[0] == 0x25 && header[1] == 0x50 &&
+                                       header[2] == 0x44 && header[3] == 0x46 &&
+                                       header[4] == 0x2D;
+                    break;
+
+                case ".jpg":
+                case ".jpeg":
+                    signatureIsValid = bytesRead >= 3 &&
+                                       header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF;
+                    break;
+
+                case ".png":
+                    byte[] pngSignature = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+                    signatureIsValid = bytesRead >= 8 && header.SequenceEqual(pngSignature);
+                    break;
+
+                default:
+                    signatureIsValid = false;
+                    break;
+            }
+
+            if (!signatureIsValid)
+            {
+                errors.Add("The file content does not match the file extension.");
+            }
+
             return errors;
         }
-
-        if (!string.Equals(file.ContentType, expectedContentType, StringComparison.OrdinalIgnoreCase))
-        {
-            errors.Add("The declared content type does not match the file extension.");
-        }
-
-        await using var stream = file.OpenReadStream();
-        var header = new byte[8];
-        var bytesRead = await stream.ReadAsync(header, cancellationToken);
-
-        var signatureIsValid = extension switch
-        {
-            ".pdf" => bytesRead >= 5 &&
-                      header[0] == 0x25 && header[1] == 0x50 &&
-                      header[2] == 0x44 && header[3] == 0x46 && header[4] == 0x2D,
-            ".jpg" or ".jpeg" => bytesRead >= 3 &&
-                                 header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF,
-            ".png" => bytesRead >= 8 &&
-                      header.SequenceEqual(new byte[]
-                      {
-                          0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
-                      }),
-            _ => false
-        };
-
-        if (!signatureIsValid)
-        {
-            errors.Add("The file content does not match the file extension.");
-        }
-
-        return errors;
     }
 }

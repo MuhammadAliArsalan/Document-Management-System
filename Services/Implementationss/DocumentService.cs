@@ -6,7 +6,7 @@ using DocumentSearch.ViewModels;
 
 namespace DocumentSearch.Services.Implementationss;
 
-public sealed class DocumentService : IDocumentService
+public class DocumentService : IDocumentService
 {
     private const int ResponseTextLimit = 1000;
     private readonly IDocumentRepository _documentRepository;

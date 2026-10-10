@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Identity;
 
 namespace DocumentSearch.Services.Implementationss;
 
-public sealed class EmployeeRegistration : IEmployeeRegistration
+public class EmployeeRegistration : IEmployeeRegistration
 {
     private readonly IAuthServiceRepository _authRepository;
     private readonly IPasswordHasher<Employee> _passwordHasher;

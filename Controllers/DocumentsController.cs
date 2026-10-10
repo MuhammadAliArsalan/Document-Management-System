@@ -9,7 +9,7 @@ namespace DocumentSearch.Controllers;
 [Authorize]
 [Route("api/[controller]")]
 [ApiController]
-public sealed class DocumentsController : ControllerBase
+public class DocumentsController : ControllerBase
 {
     private readonly IDocumentService _documentService;
 

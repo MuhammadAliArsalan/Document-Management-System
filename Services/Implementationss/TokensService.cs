@@ -7,7 +7,7 @@ using System.Security.Claims;
 
 namespace DocumentSearch.Services.Implementationss;
 
-public  class TokensService : ITokenService
+public class TokensService : ITokenService
 {
     private readonly JwtSettings _settings;
 
