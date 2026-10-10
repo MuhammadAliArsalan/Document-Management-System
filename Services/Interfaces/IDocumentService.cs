@@ -1,20 +1,23 @@
-﻿using DocumentSearch.ViewModels;
-using DocumentSearch.Models;
+using DocumentSearch.Helpers;
+using DocumentSearch.ViewModels;
 
-namespace DocumentSearch.Services.Interfaces
+namespace DocumentSearch.Services.Interfaces;
+
+public interface IDocumentService
 {
-    public interface IDocumentService
-    {
-        Task<List<Document>> GetAllAsync();
-
-        Task<Document?> GetByIdAsync(int id);
-
-        Task<Document> UploadAsync(DocumentUploadDto dto);
-
-        Task<bool> UpdateAsync(int id, DocumentUpdateDto dto);
-
-        Task<bool> DeleteAsync(int id);
-
-        Task<List<Document>> SearchAsync(string query);
-    }
+    Task<ServiceResult<IReadOnlyList<DocumentResponse>>> GetAllAsync(int employeeId);
+    Task<ServiceResult<DocumentResponse>> GetByIdAsync(int id, int employeeId);
+    Task<ServiceResult<DocumentResponse>> UploadAsync(
+        DocumentUploadDto dto,
+        int employeeId,
+        CancellationToken cancellationToken = default);
+    Task<ServiceResult<DocumentResponse>> UpdateAsync(
+        int id,
+        DocumentUpdateDto dto,
+        int employeeId,
+        CancellationToken cancellationToken = default);
+    Task<ServiceResult<object?>> DeleteAsync(int id, int employeeId);
+    Task<ServiceResult<IReadOnlyList<DocumentResponse>>> SearchAsync(
+        string query,
+        int employeeId);
 }

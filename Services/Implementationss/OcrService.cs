@@ -14,7 +14,7 @@ namespace DocumentSearch.Services.Implementationss
         {
             var tessDataPath = Path.Combine(
                 _environment.ContentRootPath,
-                "tessdata");
+                "tessData");
 
             using var engine = new TesseractEngine(
                 tessDataPath,

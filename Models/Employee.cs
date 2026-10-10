@@ -1,6 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using System.Reflection.Metadata;
 
 namespace DocumentSearch.Models;
 
@@ -21,6 +20,13 @@ public class Employee
     [Required]
     [MaxLength(100)]
     public string LastName { get; set; } = string.Empty;
+
+
+    [Required]
+    [MaxLength(256)]
+    public string PasswordHash { get; set; } = string.Empty;
+
+    public bool IsAdmin { get; set; }
 
     // Navigation property
     public ICollection<Document> Documents { get; set; }

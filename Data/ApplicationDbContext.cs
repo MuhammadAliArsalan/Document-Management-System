@@ -28,5 +28,13 @@ public class ApplicationDbContext : DbContext
             .WithMany(e => e.Documents)
             .HasForeignKey(d => d.UploadedByEmployeeId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<Employee>()
+        .HasIndex(e => e.EmployeeCode)
+        .IsUnique();
+
+        modelBuilder.Entity<Employee>()
+            .Property(e => e.IsAdmin)
+            .HasDefaultValue(false);
     }
 }

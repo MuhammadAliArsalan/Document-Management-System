@@ -6,11 +6,12 @@ The API extracts text directly from text-based PDFs. For scanned PDFs and image 
 
 ## Features
 
-- Employee registration and login
+- Administrator-controlled employee registration and employee login
 - Secure password hashing with ASP.NET Core Identity's `PasswordHasher`
 - JWT bearer authentication
 - Employee-scoped document access
-- PDF, JPEG, and PNG uploads
+- PDF, JPEG, and PNG uploads with a configurable 20 MB limit
+- Extension, MIME type, filename, and file-signature validation
 - Direct text extraction from text-based PDFs
 - OCR fallback for scanned PDFs
 - OCR extraction from JPEG and PNG images
@@ -18,13 +19,13 @@ The API extracts text directly from text-based PDFs. For scanned PDFs and image 
 - Text-based document search
 - Document replacement with refreshed extracted text
 - Document and physical-file deletion
-- Consistent API response envelopes for document endpoints
+- Consistent API response envelopes across authentication and document endpoints
 - Swagger/OpenAPI documentation in development
 - Entity Framework Core migrations for SQL Server
 
 ## How document processing works
 
-1. An employee registers or logs in and receives a JWT.
+1. An administrator registers an employee, and the employee logs in to receive a JWT.
 2. The client uploads a document using a multipart form request and includes the JWT in the `Authorization` header.
 3. The API obtains the employee ID from the token; document ownership is never taken from the submitted form data.
 4. The uploaded file is stored in `Documents/` using a generated GUID filename.
@@ -88,11 +89,11 @@ tessData/        Tesseract English language data
 
 ### Authentication
 
-Authentication endpoints do not require a JWT.
+Login is anonymous. Registration requires a valid JWT containing the `Admin` role.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/auth/register` | Register a new employee account |
+| `POST` | `/api/auth/register` | Register a non-admin employee; administrators only |
 | `POST` | `/api/auth/login` | Authenticate an employee and return a JWT |
 
 #### Register
@@ -100,6 +101,7 @@ Authentication endpoints do not require a JWT.
 ```http
 POST /api/auth/register
 Content-Type: application/json
+Authorization: Bearer <admin-jwt-token>
 ```
 
 ```json
@@ -169,9 +171,11 @@ curl.exe `
 
 Search currently performs a substring match against the extracted text stored in SQL Server.
 
+Uploads and replacements accept only PDF, JPEG, and PNG files. The default maximum file size is 20 MB. The API validates the filename, extension, declared MIME type, and file signature before storing or processing a file.
+
 ## Document data
 
-Each stored document contains:
+Each database document contains:
 
 - `Id`
 - `UploadedByEmployeeId`
@@ -184,16 +188,18 @@ Each stored document contains:
 
 Employees can access only documents whose `UploadedByEmployeeId` matches the employee ID in their JWT.
 
+API responses use `DocumentResponse` and do not expose the internal `FilePath`, employee navigation property, or ownership field. Extracted text is limited to the first 1,000 characters in responses.
+
 ## API response format
 
-Document endpoints return a common response envelope:
+Authentication, document, search, validation, and authorization responses use a common envelope:
 
 ```json
 {
+  "success": true,
   "message": "Documents retrieved successfully.",
-  "error": null,
   "data": [],
-  "statusCode": 200
+  "errors": null
 }
 ```
 
@@ -221,6 +227,7 @@ The application uses two principal tables:
 - `FirstName`
 - `LastName`
 - `PasswordHash`
+- `IsAdmin`
 
 ### `T_Documents`
 
@@ -234,6 +241,18 @@ The application uses two principal tables:
 - `ExtractedText`
 
 Employee deletion is restricted while documents still reference the employee.
+
+### Provisioning the first administrator
+
+The `IsAdmin` migration defaults every existing and new employee to `false`. After applying the migration, promote one verified existing employee directly in SQL Server:
+
+```sql
+UPDATE T_Employees
+SET IsAdmin = 1
+WHERE EmployeeCode = 'YOUR_VERIFIED_EMPLOYEE_CODE';
+```
+
+Verify that exactly one intended row was updated. That employee must log in again to receive a new JWT containing the `Admin` role. API registration always creates non-admin employees; additional administrator changes are performed explicitly in SQL Server.
 
 ## Configuration
 

@@ -1,8 +1,9 @@
-﻿namespace DocumentSearch.ViewModels
+using System.ComponentModel.DataAnnotations;
+
+namespace DocumentSearch.ViewModels;
+
+public sealed class DocumentUpdateDto
 {
-    public class DocumentUpdateDto
-    {
-        public IFormFile File { get; set; } = null!;
-        public int UploadedByEmployeeId { get; set; }
-    }
+    [Required]
+    public IFormFile? File { get; set; }
 }

@@ -1,280 +1,282 @@
-﻿using DocumentSearch.ViewModels;
+using DocumentSearch.Helpers;
 using DocumentSearch.Models;
 using DocumentSearch.Repository.Interfaces;
 using DocumentSearch.Services.Interfaces;
+using DocumentSearch.ViewModels;
 
+namespace DocumentSearch.Services.Implementationss;
 
-namespace DocumentSearch.Services.Implementationss
+public sealed class DocumentService : IDocumentService
 {
-    public class DocumentService : IDocumentService
+    private const int ResponseTextLimit = 1000;
+    private readonly IDocumentRepository _documentRepository;
+    private readonly IPdfTextExtractor _pdfTextExtractor;
+    private readonly IWebHostEnvironment _environment;
+    private readonly IOcrService _ocrService;
+    private readonly IPdfRenderer _pdfRenderer;
+    private readonly IFileValidationService _fileValidationService;
+    private readonly ILogger<DocumentService> _logger;
+
+    public DocumentService(
+        IDocumentRepository documentRepository,
+        IWebHostEnvironment environment,
+        IPdfTextExtractor pdfTextExtractor,
+        IOcrService ocrService,
+        IPdfRenderer pdfRenderer,
+        IFileValidationService fileValidationService,
+        ILogger<DocumentService> logger)
     {
-        private readonly IDocumentRepository _documentRepository;
-        private readonly IPdfTextExtractor _pdfTextExtractor;
-        private readonly IWebHostEnvironment _environment;
-        private readonly IOcrService _ocrService;
-        private readonly IPdfRenderer _pdfRenderer;
+        _documentRepository = documentRepository;
+        _environment = environment;
+        _pdfTextExtractor = pdfTextExtractor;
+        _ocrService = ocrService;
+        _pdfRenderer = pdfRenderer;
+        _fileValidationService = fileValidationService;
+        _logger = logger;
+    }
 
-        public DocumentService(
-            IDocumentRepository documentRepository,
-            IWebHostEnvironment environment,
-            IPdfTextExtractor pdfTextExtractor,
-            IOcrService ocrService,
-            IPdfRenderer pdfRenderer)
+    public async Task<ServiceResult<IReadOnlyList<DocumentResponse>>> GetAllAsync(
+        int employeeId)
+    {
+        var documents = await _documentRepository.GetAllAsync(employeeId);
+        var response = documents.Select(ToResponse).ToList();
+        return ServiceResult<IReadOnlyList<DocumentResponse>>.Success(
+            response,
+            "Documents retrieved successfully.");
+    }
+
+    public async Task<ServiceResult<DocumentResponse>> GetByIdAsync(
+        int id,
+        int employeeId)
+    {
+        var document = await _documentRepository.GetByIdAsync(id, employeeId);
+        return document == null
+            ? ServiceResult<DocumentResponse>.NotFound("Document not found.")
+            : ServiceResult<DocumentResponse>.Success(
+                ToResponse(document),
+                "Document retrieved successfully.");
+    }
+
+    public async Task<ServiceResult<DocumentResponse>> UploadAsync(
+        DocumentUploadDto dto,
+        int employeeId,
+        CancellationToken cancellationToken = default)
+    {
+        var errors = await _fileValidationService.ValidateAsync(dto.File, cancellationToken);
+        if (errors.Count > 0)
         {
-            _documentRepository = documentRepository;
-            _environment = environment;
-            _pdfTextExtractor = pdfTextExtractor;
-            _ocrService = ocrService;
-            _pdfRenderer = pdfRenderer;
+            return ServiceResult<DocumentResponse>.ValidationError(
+                "File validation failed.",
+                errors);
         }
 
-        public async Task<List<Document>> GetAllAsync()
+        var file = dto.File!;
+        var originalFileName = Path.GetFileName(file.FileName);
+        var extension = Path.GetExtension(originalFileName).ToLowerInvariant();
+        var documentsPath = Path.Combine(_environment.ContentRootPath, "Documents");
+        Directory.CreateDirectory(documentsPath);
+
+        var uniqueFileName = $"{Guid.NewGuid()}{extension}";
+        var physicalPath = Path.Combine(documentsPath, uniqueFileName);
+
+        try
         {
-            return await _documentRepository.GetAllAsync();
-        }
-
-        public async Task<Document?> GetByIdAsync(int id)
-        {
-            return await _documentRepository.GetByIdAsync(id);
-        }
-
-        public async Task<Document> UploadAsync(DocumentUploadDto dto)
-        {
-            if (dto.File == null || dto.File.Length == 0)
-                throw new ArgumentException("File is required.");
-
-            var documentsPath = Path.Combine(
-                _environment.ContentRootPath,
-                "Documents");
-
-            Directory.CreateDirectory(documentsPath);
-
-            var extension = Path.GetExtension(dto.File.FileName)
-                .ToLowerInvariant();
-
-            var uniqueFileName = $"{Guid.NewGuid()}{extension}";
-
-            var physicalPath = Path.Combine(
-                documentsPath,
-                uniqueFileName);
-
-            // Save file
-            await using (var stream = new FileStream(
-                physicalPath,
-                FileMode.Create))
-            {
-                await dto.File.CopyToAsync(stream);
-            }
-
-            // Extract text
-            var extractedText = string.Empty;
-
-            if (extension == ".pdf")
-            {
-                // First we try normal PDF text extraction
-                extractedText = _pdfTextExtractor.ExtractText(physicalPath);
-
-                // If PDF has little/no text, treat it as scanned PDF
-                if (string.IsNullOrWhiteSpace(extractedText) || extractedText.Trim().Length < 20)
-                {
-                    var ocrDirectory = Path.Combine(_environment.ContentRootPath,"TempOCR",Guid.NewGuid().ToString());
-
-                    Directory.CreateDirectory(ocrDirectory);
-
-                    try
-                    {
-                        var pageImages = _pdfRenderer.RenderPages(
-                            physicalPath,
-                            ocrDirectory);
-
-                        foreach (var imagePath in pageImages)
-                        {
-                            var pageText =_ocrService.ExtractTextFromImage(imagePath);
-
-                            extractedText += pageText + Environment.NewLine;
-                        }
-                    }
-                    finally
-                    {
-                        // Delete temporary OCR images
-                        if (Directory.Exists(ocrDirectory))
-                        {
-                            Directory.Delete(
-                                ocrDirectory,
-                                recursive: true);
-                        }
-                    }
-                }
-            }
-
-            // Image
-            else if (
-                extension == ".jpg" ||
-                extension == ".jpeg" ||
-                extension == ".png")
-            {
-                extractedText = _ocrService.ExtractTextFromImage(physicalPath);
-            }
-
+            await SaveFileAsync(file, physicalPath, cancellationToken);
+            var extractedText = ExtractText(physicalPath, extension);
             var document = new Document
             {
-                UploadedByEmployeeId = dto.UploadedByEmployeeId,
-                FileName = dto.File.FileName,
-                ContentType = dto.File.ContentType,
+                UploadedByEmployeeId = employeeId,
+                FileName = originalFileName,
+                ContentType = file.ContentType,
                 FilePath = Path.Combine("Documents", uniqueFileName),
-                FileSize = dto.File.Length,
+                FileSize = file.Length,
                 UploadedAt = DateTime.UtcNow,
                 ExtractedText = extractedText
             };
 
-            return await _documentRepository.AddAsync(document);
+            await _documentRepository.AddAsync(document);
+            return ServiceResult<DocumentResponse>.Created(
+                ToResponse(document),
+                "Document uploaded successfully.");
+        }
+        catch (Exception exception)
+        {
+            TryDeleteFile(physicalPath);
+            _logger.LogError(exception, "Document upload failed for employee {EmployeeId}.", employeeId);
+            return ServiceResult<DocumentResponse>.UnexpectedError(
+                "The document could not be uploaded.");
+        }
+    }
+
+    public async Task<ServiceResult<DocumentResponse>> UpdateAsync(
+        int id,
+        DocumentUpdateDto dto,
+        int employeeId,
+        CancellationToken cancellationToken = default)
+    {
+        var existingDocument = await _documentRepository.GetByIdAsync(id, employeeId);
+        if (existingDocument == null)
+            return ServiceResult<DocumentResponse>.NotFound("Document not found.");
+
+        var errors = await _fileValidationService.ValidateAsync(dto.File, cancellationToken);
+        if (errors.Count > 0)
+        {
+            return ServiceResult<DocumentResponse>.ValidationError(
+                "File validation failed.",
+                errors);
         }
 
+        var file = dto.File!;
+        var originalFileName = Path.GetFileName(file.FileName);
+        var extension = Path.GetExtension(originalFileName).ToLowerInvariant();
+        var documentsPath = Path.Combine(_environment.ContentRootPath, "Documents");
+        Directory.CreateDirectory(documentsPath);
 
-        public async Task<bool> UpdateAsync(
-            int id,
-            DocumentUpdateDto dto)
+        var uniqueFileName = $"{Guid.NewGuid()}{extension}";
+        var newPhysicalPath = Path.Combine(documentsPath, uniqueFileName);
+        var oldPhysicalPath = Path.Combine(_environment.ContentRootPath, existingDocument.FilePath);
+
+        try
         {
-            if (dto.File == null || dto.File.Length == 0)
-                throw new ArgumentException("File is required.");
+            await SaveFileAsync(file, newPhysicalPath, cancellationToken);
+            var extractedText = ExtractText(newPhysicalPath, extension);
 
-            var existingDocument =
-                await _documentRepository.GetByIdAsync(id);
+            existingDocument.FileName = originalFileName;
+            existingDocument.ContentType = file.ContentType;
+            existingDocument.FileSize = file.Length;
+            existingDocument.FilePath = Path.Combine("Documents", uniqueFileName);
+            existingDocument.ExtractedText = extractedText;
 
-            if (existingDocument == null)
-                return false;
-
-            // Delete old physical file
-            var oldPhysicalPath = Path.Combine(
-                _environment.ContentRootPath,
-                existingDocument.FilePath);
-
-            if (File.Exists(oldPhysicalPath))
-            {
-                File.Delete(oldPhysicalPath);
-            }
-
-            // Save new file
-            var documentsPath = Path.Combine(
-                _environment.ContentRootPath,
-                "Documents");
-
-            Directory.CreateDirectory(documentsPath);
-
-            var extension = Path.GetExtension(dto.File.FileName)
-                .ToLowerInvariant();
-
-            var uniqueFileName = $"{Guid.NewGuid()}{extension}";
-
-            var newPhysicalPath = Path.Combine(documentsPath, uniqueFileName);
-
-            await using (var stream = new FileStream(
-                newPhysicalPath,
-                FileMode.Create))
-            {
-                await dto.File.CopyToAsync(stream);
-            }
-
-            // Extract text
-            var extractedText = string.Empty;
-
-            // PDF
-            if (extension == ".pdf")
-            {
-                extractedText =_pdfTextExtractor.ExtractText(newPhysicalPath);
-
-                // Scanned PDF fallback
-                if (string.IsNullOrWhiteSpace(extractedText) || extractedText.Trim().Length < 20)
-                {
-                    var ocrDirectory = Path.Combine(
-                        _environment.ContentRootPath,
-                        "TempOCR",
-                        Guid.NewGuid().ToString());
-
-                    Directory.CreateDirectory(ocrDirectory);
-
-                    try
-                    {
-                        var pageImages =
-                            _pdfRenderer.RenderPages(
-                                newPhysicalPath,
-                                ocrDirectory);
-
-                        foreach (var imagePath in pageImages)
-                        {
-                            var pageText = _ocrService.ExtractTextFromImage(imagePath);
-
-                            extractedText += pageText + Environment.NewLine;
-                        }
-                    }
-                    finally
-                    {
-                        if (Directory.Exists(ocrDirectory))
-                        {
-                            Directory.Delete(
-                                ocrDirectory,
-                                recursive: true);
-                        }
-                    }
-                }
-            }
-
-            // Image
-            else if (
-                extension == ".jpg" ||
-                extension == ".jpeg" ||
-                extension == ".png")
-            {
-                extractedText = _ocrService.ExtractTextFromImage(newPhysicalPath);
-            }
-
-            // Update DB metadata
-            existingDocument.FileName = dto.File.FileName;
-            existingDocument.ContentType = dto.File.ContentType;
-            existingDocument.FileSize = dto.File.Length;
-            existingDocument.FilePath =
-                Path.Combine("Documents", uniqueFileName);
-            existingDocument.UploadedByEmployeeId =
-                dto.UploadedByEmployeeId;
-            existingDocument.ExtractedText =
-                extractedText;
-
-            await _documentRepository.UpdateAsync(
-                existingDocument);
-
-            return true;
+            await _documentRepository.UpdateAsync(existingDocument);
+        }
+        catch (Exception exception)
+        {
+            TryDeleteFile(newPhysicalPath);
+            _logger.LogError(
+                exception,
+                "Document update failed for document {DocumentId} and employee {EmployeeId}.",
+                id,
+                employeeId);
+            return ServiceResult<DocumentResponse>.UnexpectedError(
+                "The document could not be updated.");
         }
 
-        public async Task<bool> DeleteAsync(int id)
+        TryDeleteFile(oldPhysicalPath);
+        return ServiceResult<DocumentResponse>.Success(
+            ToResponse(existingDocument),
+            "Document updated successfully.");
+    }
+
+    public async Task<ServiceResult<object?>> DeleteAsync(int id, int employeeId)
+    {
+        var document = await _documentRepository.GetByIdAsync(id, employeeId);
+        if (document == null)
+            return ServiceResult<object?>.NotFound("Document not found.");
+
+        try
         {
-            var document =
-                await _documentRepository.GetByIdAsync(id);
-
-            if (document == null)
-                return false;
-
-            // Delete physical file
-            var physicalPath = Path.Combine(_environment.ContentRootPath,document.FilePath);
-
-            if (File.Exists(physicalPath))
-            {
-                File.Delete(physicalPath);
-            }
-
             await _documentRepository.DeleteAsync(document);
-
-            return true;
+            TryDeleteFile(Path.Combine(_environment.ContentRootPath, document.FilePath));
+            return ServiceResult<object?>.Success(null, "Document deleted successfully.");
         }
-
-        public async Task<List<Document>> SearchAsync(string query)
+        catch (Exception exception)
         {
-            if (string.IsNullOrWhiteSpace(query))
-                throw new ArgumentException("Search query is required.");
+            _logger.LogError(
+                exception,
+                "Document deletion failed for document {DocumentId} and employee {EmployeeId}.",
+                id,
+                employeeId);
+            return ServiceResult<object?>.UnexpectedError(
+                "The document could not be deleted.");
+        }
+    }
 
-            query = query.Trim();
-
-            return await _documentRepository.SearchAsync(query);
+    public async Task<ServiceResult<IReadOnlyList<DocumentResponse>>> SearchAsync(
+        string query,
+        int employeeId)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return ServiceResult<IReadOnlyList<DocumentResponse>>.ValidationError(
+                "Search query is required.",
+                ["The q query-string parameter cannot be empty."]);
         }
 
+        var documents = await _documentRepository.SearchAsync(query.Trim(), employeeId);
+        var response = documents.Select(ToResponse).ToList();
+        return ServiceResult<IReadOnlyList<DocumentResponse>>.Success(
+            response,
+            "Search completed successfully.");
+    }
+
+    private static async Task SaveFileAsync(
+        IFormFile file,
+        string physicalPath,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(
+            physicalPath,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None);
+        await file.CopyToAsync(stream, cancellationToken);
+    }
+
+    private string ExtractText(string physicalPath, string extension)
+    {
+        if (extension != ".pdf")
+            return _ocrService.ExtractTextFromImage(physicalPath);
+
+        var extractedText = _pdfTextExtractor.ExtractText(physicalPath);
+        if (!string.IsNullOrWhiteSpace(extractedText) && extractedText.Trim().Length >= 20)
+            return extractedText;
+
+        var ocrDirectory = Path.Combine(
+            _environment.ContentRootPath,
+            "TempOCR",
+            Guid.NewGuid().ToString());
+        Directory.CreateDirectory(ocrDirectory);
+
+        try
+        {
+            var pageText = _pdfRenderer.RenderPages(physicalPath, ocrDirectory)
+                .Select(_ocrService.ExtractTextFromImage);
+            return string.Join(Environment.NewLine, pageText);
+        }
+        finally
+        {
+            if (Directory.Exists(ocrDirectory))
+                Directory.Delete(ocrDirectory, recursive: true);
+        }
+    }
+
+    private void TryDeleteFile(string physicalPath)
+    {
+        try
+        {
+            if (File.Exists(physicalPath))
+                File.Delete(physicalPath);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(exception, "Could not delete file {FilePath}.", physicalPath);
+        }
+    }
+
+    private static DocumentResponse ToResponse(Document document)
+    {
+        var text = document.ExtractedText;
+        if (text?.Length > ResponseTextLimit)
+            text = text[..ResponseTextLimit];
+
+        return new DocumentResponse
+        {
+            Id = document.Id,
+            FileName = document.FileName,
+            ContentType = document.ContentType,
+            FileSize = document.FileSize,
+            UploadedAt = document.UploadedAt,
+            ExtractedText = text
+        };
     }
 }

@@ -13,16 +13,18 @@ namespace DocumentSearch.Repository.Implementations
             _context = context;
         }
 
-        public async Task<List<Document>> GetAllAsync()
+        public async Task<List<Document>> GetAllAsync(int employeeId)
         {
-            return await _context.Documents.
-                AsNoTracking().ToListAsync();
+            return await _context.Documents
+                .AsNoTracking()
+                .Where(d => d.UploadedByEmployeeId == employeeId)
+                .ToListAsync();
         }
 
-        public async Task<Document?> GetByIdAsync(int id)
+        public async Task<Document?> GetByIdAsync(int id, int employeeId)
         {
-            return await _context.Documents.
-                FirstOrDefaultAsync(d => d.Id == id);
+            return await _context.Documents
+                .FirstOrDefaultAsync(d => d.Id == id && d.UploadedByEmployeeId == employeeId);
         }
 
         public async Task<Document> AddAsync(Document document)
@@ -45,11 +47,12 @@ namespace DocumentSearch.Repository.Implementations
             await _context.SaveChangesAsync();
         }
 
-        public async Task<List<Document>> SearchAsync(string query)
+        public async Task<List<Document>> SearchAsync(string query, int employeeId)
         {
             return await _context.Documents
                 .AsNoTracking()
-                .Where(d => d.ExtractedText != null &&
+                .Where(d => d.UploadedByEmployeeId == employeeId &&
+                            d.ExtractedText != null &&
                             d.ExtractedText.Contains(query))
                 .ToListAsync();
         }

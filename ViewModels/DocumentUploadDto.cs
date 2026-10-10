@@ -1,9 +1,9 @@
-﻿using Microsoft.AspNetCore.Http;
-namespace DocumentSearch.ViewModels
+using System.ComponentModel.DataAnnotations;
+
+namespace DocumentSearch.ViewModels;
+
+public sealed class DocumentUploadDto
 {
-    public class DocumentUploadDto
-    {
-        public IFormFile File { get; set; } = null!;
-        public int UploadedByEmployeeId { get; set; }
-    }
+    [Required]
+    public IFormFile? File { get; set; }
 }
