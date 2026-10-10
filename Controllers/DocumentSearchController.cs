@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace DocumentSearch.Controllers;
 
 [Authorize]
-[Route("api/documents/search")]
+[Route("api/documents/[controller]")]
 [ApiController]
 public class DocumentSearchController : ControllerBase
 {
